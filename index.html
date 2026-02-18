@@ -71,7 +71,7 @@
     <div class="row"><label>Respuesta del chatbot (output)</label><input id="respTk" type="number" value="250"><span class="unit">tokens</span></div>
 
     <div class="section-title">Imágenes (% de requests)</div>
-    <div class="row"><label>% requests con imagen</label><input id="imgPct" type="number" value="30"><span class="unit">%</span></div>
+    <div class="row"><label>% requests con imagen <span class="hint">Imagen solo en primer turno de la conversación</span></label><input id="imgPct" type="number" value="30"><span class="unit">%</span></div>
     <div class="row"><label>Imágenes por request</label><input id="imgCount" type="number" value="1"><span class="unit">imgs</span></div>
     <div class="row"><label>Resolución promedio <span class="hint">tokens = (L × W) / 750</span></label><input id="imgL" type="number" value="1280" style="width:70px"><span style="font-size:13px;color:#6b7280;margin:0 2px">×</span><input id="imgW" type="number" value="720" style="width:70px"><span class="unit">px</span></div>
   </div>
@@ -108,15 +108,12 @@
       <div class="cost-row"><span>Tokens imagen por foto <span style="font-size:11px;color:#9ca3af;">((L×W)/750)</span></span><span class="val" id="rImgTk">—</span></div>
     </div>
 
-    <div class="notes">
-      <div class="notes-title">NOTAS</div>
-      • La búsqueda en KB la gestiona InvGate → no hay costo de embeddings en Bedrock<br>
-      • <strong>Pendiente:</strong> Validar si InvGate vectoriza internamente o recibe texto plano<br>
-      • Prompt Caching (no incluido) puede reducir input ~90% en system prompt repetido<br>
-      • <strong>Volumen de tickets real no confirmado por Farmacity</strong> — ajustar conv/día según dato real<br>
-      • Se recomienda redimensionar imágenes a máx 1568px en lado largo antes de enviar al modelo<br>
-      • Evaluación de calidad a definir en Discovery (Bedrock Model Evaluation, LLM-as-a-judge, o manual)
+    <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:14px;margin-top:14px;">
+      <div style="font-size:11px;font-weight:600;color:#9ca3af;margin-bottom:8px;">DETALLE DEL CÁLCULO</div>
+      <div id="calcDetail" style="font-size:11px;color:#6b7280;line-height:1.8;font-family:monospace;"></div>
     </div>
+
+
   </div>
 
   <p style="text-align:center;font-size:10px;color:#9ca3af;margin-top:16px;">DinoCloud × AWS Partner Network — Febrero 2026</p>
@@ -153,8 +150,7 @@ function calc() {
 
   const imgTokensPerImg = Math.round((imgL * imgW) / 750);
   const imgConvsMonth = Math.round(convMonth * imgPct / 100);
-  const imgTurnsMonth = imgConvsMonth * turns;
-  const imgTokensTotal = imgTurnsMonth * imgCount * imgTokensPerImg;
+  const imgTokensTotal = imgConvsMonth * imgCount * imgTokensPerImg;
 
   const inPrice = 1.0;
   const outPrice = 5.0;
@@ -175,6 +171,40 @@ function calc() {
   $('rAnnual').textContent = fmt(annual);
   $('rPerConv').textContent = fmt(perConv);
   $('rImgTk').textContent = fmtN(imgTokensPerImg) + ' tk';
+
+  // Build calculation detail
+  const lines = [];
+  lines.push('<strong>─ Volumen</strong>');
+  lines.push(`${fmtN(convDay)} conv/día × ${days} días = <strong>${fmtN(convMonth)} conv/mes</strong>`);
+  lines.push(`${fmtN(convMonth)} conv × ${turns} turnos = <strong>${fmtN(totalTurns)} turnos/mes</strong>`);
+  lines.push('');
+  lines.push('<strong>─ Input tokens texto (por conversación)</strong>');
+  let runningTotal = 0;
+  for (let t = 0; t < turns; t++) {
+    const h = t * histTk;
+    const tot = sysTk + kbTk + queryTk + h;
+    runningTotal += tot;
+    lines.push(`Turno ${t+1}: ${fmtN(sysTk)} sys + ${fmtN(kbTk)} kb + ${fmtN(queryTk)} query + ${fmtN(h)} hist = ${fmtN(tot)} tk`);
+  }
+  lines.push(`Total por conv: <strong>${fmtN(runningTotal)} tk</strong>`);
+  lines.push(`Mensual: ${fmtN(runningTotal)} × ${fmtN(convMonth)} = <strong>${(textInputTotal/1e6).toFixed(2)}M tk</strong>`);
+  lines.push('');
+  lines.push('<strong>─ Output tokens</strong>');
+  lines.push(`${fmtN(respTk)} tk/turno × ${fmtN(totalTurns)} turnos = <strong>${(textOutputTotal/1e6).toFixed(2)}M tk</strong>`);
+  lines.push('');
+  lines.push('<strong>─ Imágenes (solo primer turno)</strong>');
+  lines.push(`Tokens/img: (${fmtN(imgL)} × ${fmtN(imgW)}) / 750 = <strong>${fmtN(imgTokensPerImg)} tk</strong>`);
+  lines.push(`Conv con imagen: ${fmtN(convMonth)} × ${imgPct}% = ${fmtN(imgConvsMonth)} conv`);
+  lines.push(`${fmtN(imgConvsMonth)} conv × ${imgCount} img × ${fmtN(imgTokensPerImg)} tk = <strong>${(imgTokensTotal/1e6).toFixed(2)}M tk</strong>`);
+  lines.push('');
+  lines.push('<strong>─ Costos (Claude Haiku 4.5 @ $1.00/1M in, $5.00/1M out)</strong>');
+  lines.push(`Texto input:  ${(textInputTotal/1e6).toFixed(2)}M × $1.00 = ${fmt((textInputTotal/1e6)*inPrice)}`);
+  lines.push(`Texto output: ${(textOutputTotal/1e6).toFixed(2)}M × $5.00 = ${fmt((textOutputTotal/1e6)*outPrice)}`);
+  lines.push(`Imágenes:     ${(imgTokensTotal/1e6).toFixed(2)}M × $1.00 = ${fmt((imgTokensTotal/1e6)*inPrice)}`);
+  lines.push(`<strong>Total mensual: ${fmt(monthly)}</strong>`);
+  lines.push(`<strong>Total anual:   ${fmt(annual)}</strong>`);
+
+  $('calcDetail').innerHTML = lines.join('<br>');
 }
 
 document.querySelectorAll('input').forEach(el => el.addEventListener('input', calc));
